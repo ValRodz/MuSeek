@@ -27,7 +27,7 @@ if ($is_authenticated) {
     error_log("Guest user accessing browse.php");
 }
 
-$studios_query = "SELECT StudioID, StudioName, Loc_Desc, StudioImg, OwnerID FROM studios";
+$studios_query = "SELECT StudioID, StudioName, Loc_Desc, StudioImg, OwnerID, Time_IN, Time_OUT FROM studios";
 error_log("Executing query: $studios_query");
 $studios_result = mysqli_query($conn, $studios_query);
 
@@ -62,6 +62,27 @@ while ($row = mysqli_fetch_assoc($studios_result)) {
         $services[] = $service_row;
     }
     $row['services'] = $services;
+
+    // Compute min price among services
+    $row['min_price'] = null;
+    foreach ($services as $svc) {
+        if (isset($svc['Price'])) {
+            $p = floatval($svc['Price']);
+            if ($row['min_price'] === null || $p < $row['min_price']) {
+                $row['min_price'] = $p;
+            }
+        }
+    }
+
+    // Compute average rating for this studio
+    $rating_query = "SELECT AVG(f.Rating) AS avg_rating\n                     FROM feedback f\n                     JOIN bookings b ON f.BookingID = b.BookingID\n                     WHERE b.StudioID = ?";
+    $stmt_rating = mysqli_prepare($conn, $rating_query);
+    mysqli_stmt_bind_param($stmt_rating, "i", $studio_id);
+    mysqli_stmt_execute($stmt_rating);
+    $rating_result = mysqli_stmt_get_result($stmt_rating);
+    $rating_row = mysqli_fetch_assoc($rating_result);
+    $row['avg_rating'] = $rating_row && $rating_row['avg_rating'] !== null ? floatval($rating_row['avg_rating']) : null;
+    mysqli_stmt_close($stmt_rating);
 
     $studios[] = $row;
     mysqli_stmt_close($stmt);
@@ -120,7 +141,7 @@ $studio_slides = array_chunk($studios, $studios_per_slide);
         .hero {
             position: relative;
             width: 100%;
-            height: 70vh;
+            height: 40vh;
             background: linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.7)), url('<?php echo getDummyPath('slide-1.jpg'); ?>');
             background-size: cover;
             background-position: center;
@@ -808,23 +829,77 @@ $studio_slides = array_chunk($studios, $studios_per_slide);
         }
 
         /* Filter and Sort Styles */
-        .filters-section {
+        .content-layout {
+            display: flex;
+            align-items: flex-start;
+            gap: 24px;
+        }
+        .studios-section .container {
+            max-width: 100%;
+            width: 100%;
+        }
+        .filters-sidebar {
             background: #1f1f1f;
             padding: 20px;
             border-radius: 12px;
-            margin-bottom: 30px;
+            position: sticky;
+            top: 90px;
+            width: 320px;
+            flex: 0 0 320px;
         }
-
+        .studios-pane {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center; /* center the studios container */
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .studios-pane .section-header {
+            width: 100%;
+            max-width: 1400px;
+            margin: 0 auto 40px;
+        }
         .filters-title {
             font-size: 1.2rem;
             margin-bottom: 15px;
             color: #fff;
         }
-
-        .filters-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 12px;
+        }
+        .filter-group label {
+            color: #ccc;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .filter-group input,
+        .filter-group select {
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: #2a2a2a;
+            color: #fff;
+        }
+        .filter-help {
+            font-size: 0.75rem;
+            color: #999;
+            margin-top: 6px;
+        }
+        .filter-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        @media (max-width: 992px) {
+            .content-layout { flex-direction: column; }
+            .filters-sidebar { position: static; width: 100%; flex: 0 0 auto; }
+            .studios-pane { align-items: stretch; }
         }
 
         #clientChatModalOverlay {
@@ -1069,38 +1144,72 @@ $studio_slides = array_chunk($studios, $studios_per_slide);
                 <h1 class="hero-title">MuSeek</h1>
                 <p class="hero-subtitle">Find and book the perfect recording studio for your next project</p>
 
-                <div class="search-section">
-                    <form class="search-form" id="studioSearchForm">
-                        <div class="form-group">
-                            <label for="studioSearch">Search Studios</label>
-                            <input type="text" id="studioSearch" name="search" placeholder="Studio name, location, or service...">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="startDate">Start Date</label>
-                            <input type="date" id="startDate" name="start_date" min="<?php echo date('Y-m-d'); ?>">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="startTime">Start Time</label>
-                            <input type="time" id="startTime" name="start_time">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="endTime">End Time</label>
-                            <input type="time" id="endTime" name="end_time">
-                        </div>
-
-                        <button type="submit" class="search-btn">
-                            <i class="fa fa-search"></i> Search
-                        </button>
-                    </form>
-                </div>
+                <!-- Filters moved to left sidebar next to studios list -->
             </div>
         </div>
         <main class="main-content">
             <div class="studios-section">
                 <div class="container">
+                    <div class="content-layout">
+                        <aside class="filters-sidebar">
+                            <h3 class="filters-title">Filters</h3>
+                            <form id="filtersForm">
+                                <div class="filter-group">
+                                    <label for="filterPriceMin">Min Price (₱)</label>
+                                    <input type="number" id="filterPriceMin" min="0" step="1" placeholder="e.g., 100">
+                                </div>
+                                <div class="filter-group">
+                                    <label for="filterPriceMax">Max Price (₱)</label>
+                                    <input type="number" id="filterPriceMax" min="0" step="1" placeholder="e.g., 500">
+                                </div>
+                                <div class="filter-group">
+                                    <label for="filterRating">Rating</label>
+                                    <select id="filterRating">
+                                        <option value="">Any</option>
+                                        <option value="2">2+</option>
+                                        <option value="3">3+</option>
+                                        <option value="4">4+</option>
+                                        <option value="5">5</option>
+                                    </select>
+                                </div>
+                                <div class="filter-group">
+                                    <label for="filterStartTime">Start Time (hourly)</label>
+                                    <select id="filterStartTime">
+                                        <option value="">Any</option>
+                                        <option value="00:00">12:00 AM</option>
+                                        <option value="01:00">1:00 AM</option>
+                                        <option value="02:00">2:00 AM</option>
+                                        <option value="03:00">3:00 AM</option>
+                                        <option value="04:00">4:00 AM</option>
+                                        <option value="05:00">5:00 AM</option>
+                                        <option value="06:00">6:00 AM</option>
+                                        <option value="07:00">7:00 AM</option>
+                                        <option value="08:00">8:00 AM</option>
+                                        <option value="09:00">9:00 AM</option>
+                                        <option value="10:00">10:00 AM</option>
+                                        <option value="11:00">11:00 AM</option>
+                                        <option value="12:00">12:00 PM</option>
+                                        <option value="13:00">1:00 PM</option>
+                                        <option value="14:00">2:00 PM</option>
+                                        <option value="15:00">3:00 PM</option>
+                                        <option value="16:00">4:00 PM</option>
+                                        <option value="17:00">5:00 PM</option>
+                                        <option value="18:00">6:00 PM</option>
+                                        <option value="19:00">7:00 PM</option>
+                                        <option value="20:00">8:00 PM</option>
+                                        <option value="21:00">9:00 PM</option>
+                                        <option value="22:00">10:00 PM</option>
+                                        <option value="23:00">11:00 PM</option>
+                                    </select>
+                                    <small class="filter-help">Filters studios open at the selected hour</small>
+                                </div>
+                                <div class="filter-actions">
+                                    <button type="submit" class="search-btn"><i class="fa fa-filter"></i> Apply</button>
+                                    <button type="button" id="clearFilters" class="toggle-btn">Clear</button>
+                                </div>
+                            </form>
+                        </aside>
+                        <div class="studios-pane">
                     <div class="section-header">
                         <h2 class="section-title">Available Studios</h2>
                         <div class="view-toggle">
@@ -1112,7 +1221,7 @@ $studio_slides = array_chunk($studios, $studios_per_slide);
                     <div class="studios-grid" id="studiosGrid">
                         <?php if (!empty($studios)): ?>
                             <?php foreach ($studios as $studio): ?>
-                                <div class="studio-card" data-studio-id="<?php echo $studio['StudioID']; ?>">
+                                <div class="studio-card" data-studio-id="<?php echo $studio['StudioID']; ?>" data-min-price="<?php echo isset($studio['min_price']) ? htmlspecialchars($studio['min_price']) : ''; ?>" data-rating="<?php echo isset($studio['avg_rating']) ? htmlspecialchars(number_format((float)$studio['avg_rating'], 2)) : ''; ?>" data-time-in="<?php echo htmlspecialchars($studio['Time_IN'] ?? ''); ?>" data-time-out="<?php echo htmlspecialchars($studio['Time_OUT'] ?? ''); ?>">
                                     <div class="studio-image">
                                         <button class="favorite-btn" title="Add to Favorites" aria-label="Add to Favorites" aria-pressed="false"><i class="fa-regular fa-heart"></i></button>
                                         <img src="<?php echo $studio['StudioImgBase64']; ?>"
@@ -1175,8 +1284,9 @@ $studio_slides = array_chunk($studios, $studios_per_slide);
                             </div>
                         <?php endif; ?>
                     </div>
-                </div>
-            </div>
+                        </div> <!-- end studios-pane -->
+                    </div> <!-- end content-layout -->
+                </div> <!-- end container -->
         </main>
         <?php include 'shared/components/footer.php'; ?>
     </div>
@@ -1367,8 +1477,6 @@ $studio_slides = array_chunk($studios, $studios_per_slide);
     </script>
     <script>
         (function() {
-            const searchInput = document.getElementById('studioSearch');
-            const searchForm = document.getElementById('studioSearchForm');
             const cards = Array.from(document.querySelectorAll('.studio-card'));
 
             // Favorites persistence (per user if logged in)
@@ -1428,36 +1536,74 @@ $studio_slides = array_chunk($studios, $studios_per_slide);
                 });
             }
 
-            // Build cache of text for search filtering
-            const getCardText = (card) => {
-                const name = card.querySelector('.studio-name')?.textContent || '';
-                const loc = card.querySelector('.studio-location')?.textContent || '';
-                const services = Array.from(card.querySelectorAll('.service-tag')).map(s => s.textContent).join(' ');
-                return `${name} ${loc} ${services}`.toLowerCase();
-            };
-            const cardTextCache = new Map();
-            cards.forEach(card => {
-                cardTextCache.set(card, getCardText(card));
-            });
+            // Filters inputs
+            const filtersForm = document.getElementById('filtersForm');
+            const priceMinInput = document.getElementById('filterPriceMin');
+            const priceMaxInput = document.getElementById('filterPriceMax');
+            const ratingInput = document.getElementById('filterRating');
+            const startTimeInput = document.getElementById('filterStartTime');
+            const clearFiltersBtn = document.getElementById('clearFilters');
+
+            function timeToMinutes(t) {
+                if (!t) return null;
+                const parts = t.split(':');
+                if (parts.length < 2) return null;
+                const h = parseInt(parts[0], 10);
+                const m = parseInt(parts[1], 10);
+                if (Number.isNaN(h) || Number.isNaN(m)) return null;
+                return (h * 60) + m;
+            }
 
             function applyFilters() {
-                const query = (searchInput?.value || '').trim().toLowerCase();
+                const priceMin = priceMinInput && priceMinInput.value !== '' ? parseFloat(priceMinInput.value) : null;
+                const priceMax = priceMaxInput && priceMaxInput.value !== '' ? parseFloat(priceMaxInput.value) : null;
+                const ratingMin = ratingInput && ratingInput.value !== '' ? parseFloat(ratingInput.value) : null;
+                const startMinutes = startTimeInput && startTimeInput.value ? timeToMinutes(startTimeInput.value) : null;
+
                 cards.forEach(card => {
                     const id = String(card.dataset.studioId);
-                    const matchesSearch = !query || (cardTextCache.get(card) || '').includes(query);
+                    const minPrice = card.dataset.minPrice !== '' ? parseFloat(card.dataset.minPrice) : null;
+                    const avgRating = card.dataset.rating !== '' ? parseFloat(card.dataset.rating) : null;
+                    const timeIn = card.dataset.timeIn || '';
+                    const timeOut = card.dataset.timeOut || '';
+                    const inMinutes = timeToMinutes(timeIn);
+                    const outMinutes = timeToMinutes(timeOut);
+
+                    const priceOk = (
+                        (priceMin === null || (minPrice !== null && minPrice >= priceMin)) &&
+                        (priceMax === null || (minPrice !== null && minPrice <= priceMax))
+                    );
+                    const ratingOk = (ratingMin === null || (avgRating !== null && avgRating >= ratingMin));
+                    const timeOk = (
+                        startMinutes === null || (
+                            inMinutes !== null && outMinutes !== null &&
+                            startMinutes >= inMinutes && startMinutes <= outMinutes
+                        )
+                    );
                     const matchesFav = currentFilter === 'all' || favorites.has(id);
-                    card.style.display = (matchesSearch && matchesFav) ? '' : 'none';
+
+                    card.style.display = (priceOk && ratingOk && timeOk && matchesFav) ? '' : 'none';
                 });
             }
 
-            if (searchForm) {
-                searchForm.addEventListener('submit', (e) => {
+            if (filtersForm) {
+                filtersForm.addEventListener('submit', (e) => {
                     e.preventDefault();
                     applyFilters();
                 });
             }
-            if (searchInput) {
-                searchInput.addEventListener('input', applyFilters);
+            // Removed auto filtering on input; filters apply only on form submit.
+            // [priceMinInput, priceMaxInput, ratingInput, startTimeInput].forEach(el => {
+            //     if (el) el.addEventListener('input', applyFilters);
+            // });
+            if (clearFiltersBtn) {
+                clearFiltersBtn.addEventListener('click', () => {
+                    if (priceMinInput) priceMinInput.value = '';
+                    if (priceMaxInput) priceMaxInput.value = '';
+                    if (ratingInput) ratingInput.value = '';
+                    if (startTimeInput) startTimeInput.value = '';
+                    applyFilters();
+                });
             }
 
             // Initial filter
