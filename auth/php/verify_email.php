@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 session_start();
 
 $mode  = isset($_GET['mode']) ? trim($_GET['mode']) : '';
@@ -31,7 +31,8 @@ if ($mode === 'registration') {
     }
 
     // Insert the client into the database (mysqli)
-    include_once __DIR__ . '/../../shared/config/db.php';
+    include_once '../../shared/config/path_config.php';
+    include '../../shared/config/db.php'; // Include the database connection file
 
     $name  = $data['name'];
     $phone = $data['phone'];
@@ -76,7 +77,7 @@ if ($mode === 'owner_registration') {
         fail_and_redirect('Verification link expired. Please register again.', 'owner_register.php');
     }
 
-    require_once __DIR__ . '/../../shared/config/db pdo.php';
+    require_once _DIR_ . '/../../shared/config/db pdo.php';
 
     $name        = $data['name'];
     $phone       = $data['phone'];
